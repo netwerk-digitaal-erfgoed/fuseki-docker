@@ -1,9 +1,8 @@
 name: Build app and update Docker image
 
 on:
-  push:
-    branches:
-      - master
+  release:
+    types: [published]
 
 jobs:
   build:
