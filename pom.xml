@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  This pom.xml exists solely so Dependabot can watch Maven Central
+  for new releases of `org.apache.jena:jena-fuseki-docker` and open
+  pull requests that bump the version below. We do not actually run
+  Maven; the build workflow reads <version> and downloads Apache's
+  build recipe from Maven Central directly.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>nl.netwerkdigitaalerfgoed</groupId>
+    <artifactId>fuseki-docker</artifactId>
+    <version>0.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.jena</groupId>
+            <artifactId>jena-fuseki-docker</artifactId>
+            <version>6.1.0</version>
+            <type>zip</type>
+        </dependency>
+    </dependencies>
+</project>

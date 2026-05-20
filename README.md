@@ -1,51 +1,37 @@
 # fuseki-docker
-Docker image for Apache Jena's [Fuseki](https://jena.apache.org/documentation/fuseki2/) (v2) triplestore server
 
-## Endpoints
+Builds the official Apache Jena Fuseki Docker image and publishes it to
+[`netwerkdigitaalerfgoed/fuseki`](https://hub.docker.com/r/netwerkdigitaalerfgoed/fuseki) on Docker Hub.
 
-In the following examples which use `/ds` as the dataset path, these main endpoints are available:
+The image is built from Apache's own [`jena-fuseki-docker`](https://repo1.maven.org/maven2/org/apache/jena/jena-fuseki-docker/) recipe (Dockerfile + helper scripts) downloaded from Maven Central at build time. We do not maintain a Dockerfile of our own — the only thing we pin here is the **Jena version** in [`pom.xml`](pom.xml).
 
-* http://localhost:3030/ds/sparql for SPARQL Query
-* http://localhost:3030/ds/update for SPARQL Update
-* http://localhost:3030/ds/data for Graph Store (read-write)
-* http://localhost:3030/ds/get for Graph Store (read-only)
+## How it works
 
-They can be redefined in [configuration](https://jena.apache.org/documentation/fuseki2/fuseki-configuration.html#defining-the-service-name-and-endpoints-available).
+1. [`pom.xml`](pom.xml) declares a single dependency on `org.apache.jena:jena-fuseki-docker` at the desired version.
+2. [Dependabot](.github/dependabot.yml) watches that dependency and opens a pull request whenever Apache releases a new version of Jena.
+3. The auto-merge workflow merges Dependabot PRs once CI passes.
+4. The merge triggers [`.github/workflows/build.yml`](.github/workflows/build.yml), which:
+   - downloads Apache's `jena-fuseki-docker-<version>.zip` from Maven Central,
+   - runs `docker build` against the Dockerfile inside that archive (passing `JENA_VERSION=<version>`),
+   - pushes a multi-arch (linux/amd64 + linux/arm64) image to Docker Hub with tags `<version>`, `<major>`, and `latest`,
+   - creates a `v<version>` GitHub release with auto-generated notes.
 
-Post 3030 has to be [mapped](https://docs.docker.com/engine/reference/commandline/run/#publish-or-expose-port--p---expose) to be able to access it on the Docker host.
+The downstream `infrastructure` repo (Flux) tracks the published image tag and rolls Fuseki forward automatically.
 
-## Usage
+## Image tags
 
-Arguments after the image name (`atomgraph/fuseki`) become arguments to the [Fuseki server (no UI)](https://jena.apache.org/documentation/fuseki2/fuseki-main.html). As the name explains, this server version _does not include the user interface_.
+- `netwerkdigitaalerfgoed/fuseki:6.1.0` — exact Jena version
+- `netwerkdigitaalerfgoed/fuseki:6` — major channel
+- `netwerkdigitaalerfgoed/fuseki:latest` — most recent build
 
-### Examples
+## Manually triggering a build
 
-Empty memory dataset:
+GitHub → Actions → "Push image to Docker Hub" → Run workflow.
 
-    docker run --rm -p 3030:3030 atomgraph/fuseki --mem /ds
+## Bumping the Jena version manually
 
-Dataset from file `data.nt` (which is mounted as part of the current directory):
+Edit the `<version>` inside `pom.xml` and push to `master`. The workflow will build, publish, and release.
 
-    docker run --rm -p 3030:3030 -v $(pwd):/usr/share/data atomgraph/fuseki --file=/usr/share/data/data.nt /ds
+## Scope
 
-Help (all run options explained):
-
-    docker run --rm atomgraph/fuseki --help
-
-## Profiling
-
-Use `Dockerfile.profiler` to build the image instead of the default `Dockerfile`.
-
-Then append the following settings to the `JAVA_OPTIONS` env variable:
-```
--Dcom.sun.management.jmxremote=true \
--Djava.rmi.server.hostname=127.0.0.1 \
--Dcom.sun.management.jmxremote.host=0.0.0.0 \
--Dcom.sun.management.jmxremote.port=9991 \
--Dcom.sun.management.jmxremote.rmi.port=9991 \
--Dcom.sun.management.jmxremote.ssl=false \
--Dcom.sun.management.jmxremote.registry.ssl=false \
--Dcom.sun.management.jmxremote.authenticate=false \
--Djava.net.preferIPv4Stack=true
-```
-and use [VisualVM](https://visualvm.github.io/) to create a JMX connection to `127.0.0.1:9991`. Only tested with VisualVM running on Windows 10 and the remote Fuseki app running in a Docker container on WSL2.
+This image contains **only the Fuseki server** — it does not bundle the Apache Jena command-line tools (e.g. `tdb2.xloader`, `tdb2.tdbloader`). Workloads that need those should download `apache-jena-<version>.tar.gz` from Maven Central at runtime.
