@@ -1,86 +1,68 @@
-name: Build and publish Fuseki image
-
-on:
-  push:
-    branches: [master, main]
-  pull_request:
-  workflow_dispatch:
+name: Push image to Docker Hub
 
 permissions:
   contents: write
-  packages: write
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - '*'
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Read Jena version from pom.xml
-        id: jena
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        if: github.event_name != 'pull_request'
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Derive Jena version
+        id: version
         run: |
           version=$(python3 -c "import re; t=open('pom.xml').read(); m=re.search(r'<artifactId>jena-fuseki-docker</artifactId>\s*<version>([^<]+)</version>', t); print(m.group(1))")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "major=$(echo "$version" | cut -d. -f1)" >> "$GITHUB_OUTPUT"
-          echo "minor=$(echo "$version" | cut -d. -f1-2)" >> "$GITHUB_OUTPUT"
-          echo "Building Jena Fuseki $version"
+          echo "full=$version" >> "$GITHUB_OUTPUT"
+          echo "major=${version%%.*}" >> "$GITHUB_OUTPUT"
+          echo "Building Apache Jena Fuseki $version"
 
       - name: Download Apache jena-fuseki-docker recipe
         run: |
-          v="${{ steps.jena.outputs.version }}"
+          v="${{ steps.version.outputs.full }}"
           curl -fsSL -o /tmp/recipe.zip \
             "https://repo1.maven.org/maven2/org/apache/jena/jena-fuseki-docker/${v}/jena-fuseki-docker-${v}.zip"
           mkdir -p build
           unzip -q /tmp/recipe.zip -d build/
           mv "build/jena-fuseki-docker-${v}" build/recipe
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: build/recipe
           build-args: |
-            JENA_VERSION=${{ steps.jena.outputs.version }}
+            JENA_VERSION=${{ steps.version.outputs.full }}
           push: ${{ github.event_name != 'pull_request' }}
-          provenance: true
-          sbom: true
+          platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/${{ github.repository_owner }}/fuseki:${{ steps.jena.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/fuseki:${{ steps.jena.outputs.minor }}
-            ghcr.io/${{ github.repository_owner }}/fuseki:${{ steps.jena.outputs.major }}
-            ghcr.io/${{ github.repository_owner }}/fuseki:latest
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.jena.outputs.version }}
+            netwerkdigitaalerfgoed/fuseki:${{ steps.version.outputs.full }}
+            netwerkdigitaalerfgoed/fuseki:${{ steps.version.outputs.major }}
+            netwerkdigitaalerfgoed/fuseki:latest
 
-      - name: Tag git release on version change
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+      - name: Create GitHub release
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        run: gh release create "v$VERSION" --title "v$VERSION" --generate-notes || true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          tag="v${{ steps.jena.outputs.version }}"
-          if git rev-parse "$tag" >/dev/null 2>&1; then
-            echo "Tag $tag already exists; skipping."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$tag" -m "Apache Jena Fuseki $tag"
-          git push origin "$tag"
-          gh release create "$tag" \
-            --title "Apache Jena Fuseki $tag" \
-            --notes "Image: \`ghcr.io/${{ github.repository_owner }}/fuseki:${{ steps.jena.outputs.version }}\`"
+          VERSION: ${{ steps.version.outputs.full }}
+          GH_TOKEN: ${{ github.token }}
