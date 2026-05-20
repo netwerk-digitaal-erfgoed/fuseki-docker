@@ -1,36 +1,86 @@
-name: Build app and update Docker image
+name: Build and publish Fuseki image
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read Jena version from pom.xml
+        id: jena
+        run: |
+          version=$(python3 -c "import re; t=open('pom.xml').read(); m=re.search(r'<artifactId>jena-fuseki-docker</artifactId>\s*<version>([^<]+)</version>', t); print(m.group(1))")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "major=$(echo "$version" | cut -d. -f1)" >> "$GITHUB_OUTPUT"
+          echo "minor=$(echo "$version" | cut -d. -f1-2)" >> "$GITHUB_OUTPUT"
+          echo "Building Jena Fuseki $version"
+
+      - name: Download Apache jena-fuseki-docker recipe
+        run: |
+          v="${{ steps.jena.outputs.version }}"
+          curl -fsSL -o /tmp/recipe.zip \
+            "https://repo1.maven.org/maven2/org/apache/jena/jena-fuseki-docker/${v}/jena-fuseki-docker-${v}.zip"
+          mkdir -p build
+          unzip -q /tmp/recipe.zip -d build/
+          mv "build/jena-fuseki-docker-${v}" build/recipe
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker registry
-        uses: docker/login-action@v2
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@v4
+      - name: Build and push image
+        uses: docker/build-push-action@v6
         with:
-          images: ghcr.io/netwerk-digitaal-erfgoed/fuseki
+          context: build/recipe
+          build-args: |
+            JENA_VERSION=${{ steps.jena.outputs.version }}
+          push: ${{ github.event_name != 'pull_request' }}
+          provenance: true
+          sbom: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/fuseki:${{ steps.jena.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/fuseki:${{ steps.jena.outputs.minor }}
+            ghcr.io/${{ github.repository_owner }}/fuseki:${{ steps.jena.outputs.major }}
+            ghcr.io/${{ github.repository_owner }}/fuseki:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.jena.outputs.version }}
 
-      - name: Build and push image to registry
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      - name: Tag git release on version change
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v${{ steps.jena.outputs.version }}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists; skipping."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "Apache Jena Fuseki $tag"
+          git push origin "$tag"
+          gh release create "$tag" \
+            --title "Apache Jena Fuseki $tag" \
+            --notes "Image: \`ghcr.io/${{ github.repository_owner }}/fuseki:${{ steps.jena.outputs.version }}\`"
