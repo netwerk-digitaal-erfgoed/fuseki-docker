@@ -60,6 +60,22 @@ jobs:
             netwerkdigitaalerfgoed/fuseki:${{ steps.version.outputs.major }}
             netwerkdigitaalerfgoed/fuseki:latest
 
+      # Companion image with the Apache Jena CLI tools (tdb2.xloader, jena.textindexer, …)
+      # for loader/batch jobs. Built from the SAME Jena version as the server image
+      # above, so the TDB2 / Lucene formats it writes always match what Fuseki reads.
+      - name: Build and push jena-tools (CLI tools image)
+        uses: docker/build-push-action@v7
+        with:
+          context: jena-tools
+          build-args: |
+            JENA_VERSION=${{ steps.version.outputs.full }}
+          push: ${{ github.event_name != 'pull_request' }}
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            netwerkdigitaalerfgoed/jena-tools:${{ steps.version.outputs.full }}
+            netwerkdigitaalerfgoed/jena-tools:${{ steps.version.outputs.major }}
+            netwerkdigitaalerfgoed/jena-tools:latest
+
       - name: Create GitHub release
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
         run: gh release create "v$VERSION" --title "v$VERSION" --generate-notes || true
